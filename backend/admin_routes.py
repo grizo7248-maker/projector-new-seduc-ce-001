@@ -1873,3 +1873,78 @@ async def download_documentos_zip(payload: Dict[str, Any], user=Depends(require_
         media_type='application/zip',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'}
     )
+
+
+# ------------ LEMBRETE DE PAGAMENTO (e-mail em massa) ------------
+_lembrete_tasks: Dict[str, asyncio.Task] = {}
+
+
+def _hoje_brasilia() -> str:
+    return datetime.now(timezone(timedelta(hours=-3))).strftime('%d/%m/%Y')
+
+
+def _lembrete_query() -> Dict[str, Any]:
+    return {'finalized': True, 'email': {'$regex': '@'}}
+
+
+@admin_router.get('/admin/inscricoes/lembrete-pagamento/resumo')
+async def lembrete_resumo(user=Depends(require_admin)):
+    hoje = _hoje_brasilia()
+    total = await _db.inscricoes.count_documents(_lembrete_query())
+    ja = await _db.inscricoes.count_documents({**_lembrete_query(), 'lembrete_enviado_dia': hoje})
+    running = await _db.email_jobs.find_one({'status': 'enviando'}, {'_id': 0})
+    return {'total': total, 'ja_enviados_hoje': ja, 'pendentes': total - ja, 'hoje': hoje, 'em_andamento': running}
+
+
+async def _run_lembrete(job_id: str, base_url: str):
+    hoje = _hoje_brasilia()
+    prazo = f'hoje, {hoje}, às 23h59 (horário de Brasília)'
+    enviados = falhas = 0
+    try:
+        cursor = _db.inscricoes.find({**_lembrete_query(), 'lembrete_enviado_dia': {'$ne': hoje}}, {'_id': 0})
+        async for d in cursor:
+            html = build_inscricao_email_html(
+                nome=d.get('nome', ''), cpf=d.get('cpf', ''), protocolo=d.get('protocolo', ''),
+                cargo=d.get('cargo_titulo', ''), concurso=d.get('concurso', ''), valor=VALOR_INSCRICAO,
+                base_url=base_url, lembrete_prazo=prazo,
+            )
+            ok = await try_send_email(to=d['email'].strip().lower(),
+                                      subject='Último dia: sua inscrição está pendente de pagamento', html=html)
+            if ok:
+                enviados += 1
+                await _db.inscricoes.update_one({'id': d['id']}, {'$set': {
+                    'lembrete_enviado_dia': hoje, 'lembrete_enviado_at': datetime.now(timezone.utc).isoformat()}})
+            else:
+                falhas += 1
+            await _db.email_jobs.update_one({'id': job_id}, {'$set': {'enviados': enviados, 'falhas': falhas}})
+            await asyncio.sleep(0.6)
+        await _db.email_jobs.update_one({'id': job_id}, {'$set': {'status': 'concluido', 'finished_at': datetime.now(timezone.utc).isoformat()}})
+        await insert_event('lembrete', f'Lembrete de pagamento enviado para {enviados} inscrito(s)', {'enviados': enviados, 'falhas': falhas})
+    except Exception as e:
+        logger.error(f'[lembrete] erro: {e}')
+        await _db.email_jobs.update_one({'id': job_id}, {'$set': {'status': 'erro', 'erro': str(e)}})
+    finally:
+        _lembrete_tasks.pop(job_id, None)
+
+
+@admin_router.post('/admin/inscricoes/lembrete-pagamento')
+async def lembrete_enviar(request: Request, user=Depends(require_admin)):
+    running = await _db.email_jobs.find_one({'status': 'enviando'}, {'_id': 0})
+    if running and running['id'] in _lembrete_tasks:
+        return running
+    await _db.email_jobs.update_many({'status': 'enviando'}, {'$set': {'status': 'interrompido'}})
+    hoje = _hoje_brasilia()
+    total = await _db.inscricoes.count_documents({**_lembrete_query(), 'lembrete_enviado_dia': {'$ne': hoje}})
+    job = {'id': str(uuid.uuid4()), 'tipo': 'lembrete_pagamento', 'status': 'enviando', 'total': total,
+           'enviados': 0, 'falhas': 0, 'dia': hoje, 'started_at': datetime.now(timezone.utc).isoformat()}
+    await _db.email_jobs.insert_one(dict(job))
+    _lembrete_tasks[job['id']] = asyncio.create_task(_run_lembrete(job['id'], _site_base_url(request)))
+    return job
+
+
+@admin_router.get('/admin/inscricoes/lembrete-pagamento/status/{job_id}')
+async def lembrete_status(job_id: str, user=Depends(require_admin)):
+    job = await _db.email_jobs.find_one({'id': job_id}, {'_id': 0})
+    if not job:
+        raise HTTPException(404, 'Envio não encontrado')
+    return job

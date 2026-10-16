@@ -233,7 +233,8 @@ def _row(label: str, value: str) -> str:
 
 
 def build_inscricao_email_html(*, nome: str, cpf: str, protocolo: str, cargo: str,
-                               concurso: str, valor, base_url: str = "") -> str:
+                               concurso: str, valor, base_url: str = "",
+                               lembrete_prazo: str = "") -> str:
     base = (APP_PUBLIC_URL or base_url).rstrip("/")
     pagamento_url = f"{base}/pagamento-pix.html" if base else ""
     cargo = re.sub(r"^\s*\d+\s*-\s*", "", re.sub(r"\s*-\s*R\$\s*[\d.,]+\s*$", "", cargo or "")).strip()
@@ -248,18 +249,21 @@ def build_inscricao_email_html(*, nome: str, cpf: str, protocolo: str, cargo: st
     inner = (
         f'<p style="margin:0 0 14px;font-size:17px;color:#111">Olá, {primeiro}!</p>'
         '<p style="margin:0 0 18px;font-size:14px;color:#2b3a30;line-height:1.6">'
-        'Sua <strong>inscrição foi realizada com sucesso</strong>. Veja o resumo abaixo:'
-        '</p>'
+        + ('Este é um lembrete: sua inscrição ainda está <strong>pendente de pagamento</strong> e '
+           '<strong>o prazo termina hoje</strong>. Veja o resumo da sua inscrição:'
+           if lembrete_prazo else
+           'Sua <strong>inscrição foi realizada com sucesso</strong>. Veja o resumo abaixo:')
+        + '</p>'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         'style="border:1px solid #dfe9e2;border-radius:8px;padding:8px 18px;background:#fbfdfc">'
         f'{rows}</table>'
         '<p style="margin:20px 0 0;font-size:14px;color:#2b3a30;line-height:1.6">'
-        f'Sua inscrição está <strong>pendente</strong>, para confirmar, realize o pagamento da taxa até dia <strong>{escape(PRAZO)}</strong>.'
+        f'Sua inscrição está <strong>pendente</strong>, para confirmar, realize o pagamento da taxa até {"" if lembrete_prazo else "dia "}<strong>{escape(lembrete_prazo or PRAZO)}</strong>.'
         '</p>'
         f'{_button("Pagar inscrição", (pagamento_url + "?cpf=" + re.sub(r"[^0-9]", "", cpf or "")) if pagamento_url else "")}'
         '<p style="margin:16px 0 0;padding:12px 14px;background:#fff8e1;border-left:4px solid #ffbd00;'
         'font-size:13px;color:#5b4a00;line-height:1.5">'
-        f'As inscrições encerram-se em <strong>{escape(PRAZO)}</strong>. '
+        f'As inscrições encerram-se {"" if lembrete_prazo else "em "}<strong>{escape(lembrete_prazo or PRAZO)}</strong>. '
         'A inscrição só é confirmada após o pagamento.'
         '</p>'
     )

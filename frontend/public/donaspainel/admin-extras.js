@@ -203,6 +203,71 @@
     });
   }
 
+
+  // ---------- Lembrete de pagamento (e-mail para todos os inscritos) ----------
+  var LEMBRETE_ID = 'admin-extra-lembrete-pagamento';
+  function authFetch(method, url) {
+    return fetch(API + url, { method: method, headers: { 'Authorization': 'Bearer ' + (getToken() || '') } })
+      .then(function (r) {
+        if (!r.ok) { handleAuthError(r.status); throw new Error('HTTP ' + r.status); }
+        return r.json();
+      });
+  }
+  function pollLembrete(btn, id) {
+    authFetch('GET', '/admin/inscricoes/lembrete-pagamento/status/' + id).then(function (j) {
+      var label = btn.querySelector('.lbl');
+      if (j.status === 'enviando') {
+        label.textContent = 'Enviando ' + (j.enviados + j.falhas) + '/' + j.total + '…';
+        setTimeout(function () { pollLembrete(btn, id); }, 2000);
+        return;
+      }
+      btn.disabled = false;
+      label.textContent = 'Enviar lembrete de pagamento';
+      alert('Lembrete de pagamento concluído.\n\nEnviados: ' + j.enviados + '\nFalhas: ' + j.falhas +
+        (j.status === 'erro' ? '\n\nErro: ' + (j.erro || '') : ''));
+    }).catch(function () { setTimeout(function () { pollLembrete(btn, id); }, 4000); });
+  }
+  function handleLembrete(btn) {
+    if (!getToken()) { handleAuthError(401); return; }
+    btn.disabled = true;
+    authFetch('GET', '/admin/inscricoes/lembrete-pagamento/resumo').then(function (r) {
+      if (r.em_andamento) { pollLembrete(btn, r.em_andamento.id); return; }
+      if (!r.pendentes) {
+        btn.disabled = false;
+        alert(r.total ? 'Todos os ' + r.total + ' inscritos com e-mail já receberam o lembrete hoje (' + r.hoje + ').'
+                      : 'Nenhum inscrito com e-mail encontrado.');
+        return;
+      }
+      var msg = 'Enviar o e-mail "Último dia: sua inscrição está pendente de pagamento" para ' + r.pendentes +
+        ' inscrito(s)?\n\nCada candidato recebe os dados da própria inscrição, o botão "Pagar inscrição" e o aviso de que o prazo termina hoje (' + r.hoje + ', às 23h59).' +
+        (r.ja_enviados_hoje ? '\n\n' + r.ja_enviados_hoje + ' inscrito(s) que já receberam hoje serão pulados.' : '');
+      if (!confirm(msg)) { btn.disabled = false; return; }
+      return authFetch('POST', '/admin/inscricoes/lembrete-pagamento').then(function (job) { pollLembrete(btn, job.id); });
+    }).catch(function (e) {
+      btn.disabled = false;
+      alert('Erro ao enviar lembrete: ' + e.message);
+    });
+  }
+  function ensureLembreteButton() {
+    var existing = document.getElementById(LEMBRETE_ID);
+    if (!isInscricoesPage()) { if (existing) existing.remove(); return; }
+    if (existing) return;
+    var ref = null;
+    document.querySelectorAll('button').forEach(function (b) {
+      if ((b.textContent || '').trim().toLowerCase() === 'atualizar') ref = b;
+    });
+    if (!ref || !ref.parentElement) return;
+    var btn = document.createElement('button');
+    btn.id = LEMBRETE_ID;
+    btn.type = 'button';
+    btn.className = ref.className;
+    btn.setAttribute('data-testid', 'btn-enviar-lembrete-pagamento');
+    btn.style.cssText = 'background:#008d3c;color:#fff;border-color:#008d3c';
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg><span class="lbl">Enviar lembrete de pagamento</span>';
+    btn.addEventListener('click', function () { handleLembrete(btn); });
+    ref.parentElement.insertBefore(btn, ref);
+  }
+
   function ensureButton() {
     // Limpa botão "Limpar Cadastros" se não estiver na página de cadastro
     if (!isCadastroPage()) {
@@ -227,6 +292,7 @@
       injectViewButtons();
       overrideExportButton();
     }
+    ensureLembreteButton();
     if (isInscricoesPage()) {
       enrichInscriptionRows();
     }
