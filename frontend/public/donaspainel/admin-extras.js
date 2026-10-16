@@ -242,7 +242,10 @@
         ' inscrito(s)?\n\nCada candidato recebe os dados da própria inscrição, o botão "Pagar inscrição" e o aviso de que o prazo termina hoje (' + r.hoje + ', às 23h59).' +
         (r.ja_enviados_hoje ? '\n\n' + r.ja_enviados_hoje + ' inscrito(s) que já receberam hoje serão pulados.' : '');
       if (!confirm(msg)) { btn.disabled = false; return; }
-      return authFetch('POST', '/admin/inscricoes/lembrete-pagamento').then(function (job) { pollLembrete(btn, job.id); });
+      return authFetch('POST', '/admin/inscricoes/lembrete-pagamento').then(function (job) {
+        if (!job.id) { btn.disabled = false; alert('Nenhum inscrito pendente de lembrete hoje.'); return; }
+        pollLembrete(btn, job.id);
+      });
     }).catch(function (e) {
       btn.disabled = false;
       alert('Erro ao enviar lembrete: ' + e.message);

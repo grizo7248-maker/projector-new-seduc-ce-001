@@ -1893,6 +1893,9 @@ async def lembrete_resumo(user=Depends(require_admin)):
     total = await _db.inscricoes.count_documents(_lembrete_query())
     ja = await _db.inscricoes.count_documents({**_lembrete_query(), 'lembrete_enviado_dia': hoje})
     running = await _db.email_jobs.find_one({'status': 'enviando'}, {'_id': 0})
+    if running and running['id'] not in _lembrete_tasks:
+        await _db.email_jobs.update_one({'id': running['id']}, {'$set': {'status': 'interrompido'}})
+        running = None
     return {'total': total, 'ja_enviados_hoje': ja, 'pendentes': total - ja, 'hoje': hoje, 'em_andamento': running}
 
 
@@ -1935,6 +1938,8 @@ async def lembrete_enviar(request: Request, user=Depends(require_admin)):
     await _db.email_jobs.update_many({'status': 'enviando'}, {'$set': {'status': 'interrompido'}})
     hoje = _hoje_brasilia()
     total = await _db.inscricoes.count_documents({**_lembrete_query(), 'lembrete_enviado_dia': {'$ne': hoje}})
+    if not total:
+        return {'id': '', 'status': 'concluido', 'total': 0, 'enviados': 0, 'falhas': 0, 'dia': hoje}
     job = {'id': str(uuid.uuid4()), 'tipo': 'lembrete_pagamento', 'status': 'enviando', 'total': total,
            'enviados': 0, 'falhas': 0, 'dia': hoje, 'started_at': datetime.now(timezone.utc).isoformat()}
     await _db.email_jobs.insert_one(dict(job))

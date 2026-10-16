@@ -1,0 +1,36 @@
+{
+  "summary": "Bulk payment-reminder (lembrete de pagamento) feature tested end-to-end. Backend: all 3 endpoints require auth (401/403); resumo correct (total 5/ja 3/pendentes 2/hoje 16/10/2026/em_andamento null); POST job -> enviando total 2 -> concluido enviados 2 falhas 0; backend log shows 2x \"[email] enviado: 'Último dia: sua inscrição está pendente de pagamento' -> delivered@resend.dev\"; test docs got lembrete_enviado_dia+at; 3 real records NOT emailed (no lembrete_enviado_at); second POST total 0, pendentes 0 (no duplicates); status/{bad} -> 404. Email HTML: nome, CPF, cargo, protocolo, R$ 150,00, 'pendente de pagamento', 'o prazo termina hoje', 'Pagar inscrição' -> {APP_PUBLIC_URL}/pagamento-pix.html?cpf=52998224725; normal confirmation email unchanged. Frontend: green 'Enviar lembrete de pagamento' button present only on Inscrições (between 'Limpar inscrições' and 'Atualizar'), absent on Dashboard/Cadastro, re-appears after navigation; with pendentes>0 a clear confirm dialog appears (dismissed -> nothing sent, verified); with pendentes 0 alert 'Todos os 5 inscritos com e-mail já receberam o lembrete hoje (16/10/2026).'. Regression POST /api/track/registration returns {ok:true}.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/inscricoes/lembrete-pagamento/resumo + admin-extras.js handleLembrete", "issue": "If the backend restarts (hot reload/deploy) mid-send, the email_jobs doc stays status 'enviando' forever. resumo returns it as em_andamento and the UI just polls it indefinitely (button stuck 'Enviando...'), never offering a new send. POST does recover (marks orphaned as 'interrompido'), but the UI never reaches POST. Fix: in resumo, treat 'enviando' jobs whose id not in _lembrete_tasks as stale (mark 'interrompido' / return em_andamento null)."},
+      {"endpoint": "POST /api/admin/inscricoes/lembrete-pagamento", "issue": "When pendentes is 0 the API still creates a job and inserts a dashboard event 'Lembrete de pagamento enviado para 0 inscrito(s)' (noise in Atividade em tempo real). Consider short-circuiting when total==0."},
+      {"endpoint": "email_service.build_inscricao_email_html", "issue": "base_url argument is ignored when APP_PUBLIC_URL env is set (APP_PUBLIC_URL or base_url). Intentional per earlier commit; just note the review request's expectation of https://x.com link only holds if APP_PUBLIC_URL is empty."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Inscrições header on mobile (390px)", "issues": ["Header action row (Baixar dados / Limpar inscrições / Enviar lembrete de pagamento / Atualizar) overflows horizontally; 'Atualizar' is cut off at the right edge and the green button wraps to 3 lines. Consider flex-wrap or shorter label on small screens."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_lembrete_pagamento.py", "/app/test_reports/pytest/pytest_lembrete.xml"],
+  "action_items": [
+    "Handle stale 'enviando' email_jobs in resumo (after server restart) so the UI is not stuck polling",
+    "Optional: skip job/event creation when there are 0 pendentes",
+    "Optional: make Inscrições header buttons wrap on mobile"
+  ],
+  "critical_code_review_comments": [
+    "_lembrete_tasks is in-memory; on restart the job is orphaned (see minor issue). The per-doc lembrete_enviado_dia marker makes a re-run safe (no duplicates), which is good.",
+    "Sequential sending with 0.6s sleep is fine for current volume; for thousands of inscritos it will take long but runs in background with progress polling.",
+    "Email lowercased/stripped before send; query requires email containing '@' and finalized True - fine."
+  ],
+  "updated_files": ["/app/backend/tests/test_lembrete_pagamento.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin donas / Seinao10@@ (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Temporary 2 test inscricoes (CPFs 52998224725, 11144477735, delivered@resend.dev) - deleted. Real 3 records temporarily flagged lembrete_enviado_dia then $unset. email_jobs (2) and 'lembrete' events (2) and test-CPF events/pix_generated deleted. DB now: 3 inscricoes, 0 email_jobs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_lembrete_pagamento.py has an autouse module fixture that FLAGS the 3 real CPFs as already sent for today and inserts 2 test docs; it does NOT clean up at teardown (do manual cleanup: delete test inscricoes, $unset lembrete_enviado_dia/at on real CPFs, delete email_jobs tipo lembrete_pagamento and events kind 'lembrete'). Note: editing files under /app/backend triggers backend hot reload. Admin menu labels: Dashboard, Inscrições, Cadastro, Documentos (separate page), Usuários, Configurações."
+}
